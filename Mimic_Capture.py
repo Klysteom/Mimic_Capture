@@ -1,8 +1,9 @@
-import random
+import itertools
 import time
 import os
 
 COLS = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6}
+REV_COL = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G'}
 
 
 def convert_indexes(block):
@@ -49,6 +50,27 @@ class Board:
                 exit()
             self.matrix[block_i][block_j] = True
 
+    def remove_pointless_blocks(self):
+        borders = get_borders(self)
+        for border in borders:
+            break_flag = False
+            for i, row in enumerate(self.matrix):
+                for j in range(len(row)):
+                    if [i, j] not in borders and check_move(self, border[0], border[1], i, j):
+                        break_flag = True
+                        break
+                if break_flag:
+                    break
+            if break_flag is False:
+                self.matrix[border[0]][border[1]] = False
+
+    def remove_unreachable_blocks(self):
+        for i, row in enumerate(self.matrix):
+            for j, value in enumerate(row):
+                if value is True and [i, j] != self.frog:
+                    if self.calculate_best_move(i, j, to_frog=True)[0] is None:
+                        self.matrix[i][j] = False
+
     def move(self):
         border_i, border_j = self.calculate_best_move(self.frog[0], self.frog[1])
         if border_i is None or border_j is None:
@@ -63,12 +85,7 @@ class Board:
             exit()
 
     def calculate_best_move(self, start_i, start_j, to_frog=False):
-        borders = []
-        if to_frog is False:
-            for i, row in enumerate(self.matrix):
-                for j, value in enumerate(row):
-                    if value is True and (i in [0, 6] or j in [0, 6]):
-                        borders.append([i, j])
+        borders = get_borders(self)
         # calculate the shortest path from start to destination
         visited = []
         queue = [[start_i, start_j]]
@@ -88,7 +105,8 @@ class Board:
                         else:
                             if [dest_i, dest_j] in borders:
                                 return dest_i, dest_j
-                        queue.append([dest_i, dest_j])
+                        if [dest_i, dest_j] not in borders:
+                            queue.append([dest_i, dest_j])
         return None, None
 
     def show_board(self):
@@ -110,7 +128,7 @@ def clear_and_show_board(board):
     board.show_board()
 
 
-def play_game(board):
+def play_game(board, debug=False):
     while True:
         clear_and_show_board(board)
         time.sleep(1)
@@ -125,10 +143,70 @@ def play_game(board):
         clear_and_show_board(board)
         time.sleep(1)
         board.move()
+        if debug:
+            board.remove_pointless_blocks()
+            board.remove_unreachable_blocks()
+
+
+def get_borders(board):
+    borders = []
+    for i, row in enumerate(board.matrix):
+        for j, value in enumerate(row):
+            if value is True and (i in [0, 6] or j in [0, 6]):
+                borders.append([i, j])
+    return borders
+
+
+def test(string_board):
+    maximum_benefit = 0
+    benefit_list = []
+    blocks_to_remove = []
+    available_blocks = []
+    board = Board()
+    board.update_board(string_board)
+    board.remove_pointless_blocks()
+    board.remove_unreachable_blocks()
+    borders = get_borders(board)
+
+    for i in range(7):
+        for j in range(7):
+            if board.matrix[i][j] is True and [i, j] != board.frog and [i, j] not in borders:
+                available_blocks.append([i, j])
+
+    # combination of one block from available blocks
+    for i in range(1, 11):  # add all combinations of true blocks that not in the borders and not the frog block
+        blocks_to_remove += list(itertools.combinations(available_blocks, i))
+    for block_to_remove in blocks_to_remove:
+        board = Board()
+        board.update_board(string_board)
+        for block in block_to_remove:
+            i, j = block
+            board.matrix[i][j] = False
+        board.remove_pointless_blocks()
+        board.remove_unreachable_blocks()
+        borders = get_borders(board)
+        amount_of_blocks = len(borders) + len(block_to_remove)
+        if amount_of_blocks <= 10:
+            true_blocks = len(block_to_remove)
+            for i in range(7):
+                for j in range(7):
+                    if board.matrix[i][j] is True:
+                        true_blocks += 1
+            benefit = true_blocks - amount_of_blocks
+            if benefit >= maximum_benefit:
+                maximum_benefit = benefit
+                blocks_to_remove_with_maximum_benefit = list(block_to_remove) + borders
+                benefit_list.append([benefit, blocks_to_remove_with_maximum_benefit])
+
+    if len(benefit_list) != 0:
+        print(f'The maximum benefit is {maximum_benefit}.\n')
+        for item in benefit_list:
+            if item[0] == maximum_benefit:
+                print(f'Blocks to remove: {' '.join([REV_COL[i[1]]+str(i[0]+1) for i in item[1]])}')
 
 
 def main():
-    board = Board()
+    # board = Board()
     string_board = """
                     a1    c1 d1    f1 g1
                     a2    c2    e2
@@ -138,8 +216,12 @@ def main():
                     a6 b6 c6 d6 e6    g6
                        b7 c7 d7    f7
                     """
-    board.update_board(string_board)
-    play_game(board)
+
+    string_board2 = ("a2 a4 a5 a6 b1 b3 b5 b6 b7 c1 c2 c3 c4 c5 c6 c7"
+                     " d1 d2 d4 d6 e3 e4 e5 e6 e7 f1 f2 f4 f5 f6 g1 g3 g5 g6 g7")
+    # board.update_board(string_board)
+    # play_game(board)
+    test(string_board2)
 
 
 if __name__ == '__main__':
