@@ -1,6 +1,9 @@
 import itertools
 import time
 import os
+import cv2
+from PIL import Image
+import numpy as np
 
 COLS = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6}
 REV_COL = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G'}
@@ -37,18 +40,11 @@ class Board:
             print('The frog is in an undefined block.')
             exit()
 
-    def update_board(self, blocks):
-        while True:
-            blocks = blocks.replace('\n', ' ').replace('\t', ' ').replace('  ', ' ').strip()
-            if '  ' not in blocks:
-                break
-        blocks_list = blocks.split(' ')
-        for block in blocks_list:
-            block_i, block_j = convert_indexes(block)
-            if None in [block_i, block_j]:
-                print(f'The board cannot be loaded.\nBlock {block} is not defined.')
-                exit()
-            self.matrix[block_i][block_j] = True
+    def update_board(self, points):
+        for point in points:
+            _, _, i, j, is_block = point
+            if is_block is True:
+                self.matrix[i][j] = True
 
     def remove_pointless_blocks(self):
         borders = get_borders(self)
@@ -74,15 +70,14 @@ class Board:
     def move(self):
         border_i, border_j = self.calculate_best_move(self.frog[0], self.frog[1])
         if border_i is None or border_j is None:
-            clear_and_show_board(self)
-            print('The frog lost the game.')
-            exit()
+            # The player won the game
+            return True
         i, j = self.calculate_best_move(border_i, border_j, to_frog=True)
         self.frog = [i, j]
         if i == border_i and j == border_j:
-            clear_and_show_board(self)
-            print('The frog wins.')
-            exit()
+            # The player lost the game
+            return False
+        return None
 
     def calculate_best_move(self, start_i, start_j, to_frog=False):
         borders = get_borders(self)
@@ -92,21 +87,20 @@ class Board:
         while queue:
             i, j = queue[0]
             visited.append(queue.pop(0))
-            for offset_i in range(-1, 2):
-                for offset_j in range(-1, 2):
-                    dest_i = i + offset_i
-                    dest_j = j + offset_j
-                    if ([dest_i, dest_j] not in visited
-                            and [dest_i, dest_j] not in queue
-                            and check_move(self, i, j, dest_i, dest_j)):
-                        if to_frog:
-                            if [dest_i, dest_j] == self.frog:
-                                return i, j
-                        else:
-                            if [dest_i, dest_j] in borders:
-                                return dest_i, dest_j
-                        if [dest_i, dest_j] not in borders:
-                            queue.append([dest_i, dest_j])
+            for offset_i, offset_j in [[1, 0], [1, -1], [0, -1], [1, 1], [-1, 0], [-1, -1], [0, 1], [-1, 1]]:
+                dest_i = i + offset_i
+                dest_j = j + offset_j
+                if ([dest_i, dest_j] not in visited
+                        and [dest_i, dest_j] not in queue
+                        and check_move(self, i, j, dest_i, dest_j)):
+                    if to_frog:
+                        if [dest_i, dest_j] == self.frog:
+                            return i, j
+                    else:
+                        if [dest_i, dest_j] in borders:
+                            return dest_i, dest_j
+                    if [dest_i, dest_j] not in borders:
+                        queue.append([dest_i, dest_j])
         return None, None
 
     def show_board(self):
@@ -128,24 +122,34 @@ def clear_and_show_board(board):
     board.show_board()
 
 
-def play_game(board, debug=False):
+def play_game(points):
+    board = Board()
+    board.update_board(points)
+    player_moves = ''
     while True:
         clear_and_show_board(board)
         time.sleep(1)
-        remove_i, remove_j = convert_indexes(input('Select a block to remove: '))
+        player_move = input('Select a block to remove: ')
+        remove_i, remove_j = convert_indexes(player_move)
         clear_and_show_board(board)
         if (remove_i is None or remove_j is None or board.matrix[remove_i][remove_j] is False
                 or [remove_i, remove_j] == board.frog):
             print('Invalid block indexes.\nPlease try again.\n')
             time.sleep(1)
             continue
+        player_moves += player_move.upper() + ' -> '
         board.matrix[remove_i][remove_j] = False
         clear_and_show_board(board)
         time.sleep(1)
-        board.move()
-        if debug:
-            board.remove_pointless_blocks()
-            board.remove_unreachable_blocks()
+        is_win = board.move()
+        if is_win in [True, False]:
+            clear_and_show_board(board)
+            if is_win is True:
+                print('You win!')
+            else:
+                print('You lose!')
+            print(f'Your moves: {player_moves[:-4]}')
+            exit()
 
 
 def get_borders(board):
@@ -157,13 +161,13 @@ def get_borders(board):
     return borders
 
 
-def test(string_board):
+def solve(points, screenshot_path):
     maximum_benefit = 0
     benefit_list = []
     blocks_to_remove = []
     available_blocks = []
     board = Board()
-    board.update_board(string_board)
+    board.update_board(points)
     board.remove_pointless_blocks()
     board.remove_unreachable_blocks()
     borders = get_borders(board)
@@ -178,7 +182,7 @@ def test(string_board):
         blocks_to_remove += list(itertools.combinations(available_blocks, i))
     for block_to_remove in blocks_to_remove:
         board = Board()
-        board.update_board(string_board)
+        board.update_board(points)
         for block in block_to_remove:
             i, j = block
             board.matrix[i][j] = False
@@ -198,31 +202,101 @@ def test(string_board):
                 blocks_to_remove_with_maximum_benefit = list(block_to_remove) + borders
                 benefit_list.append([benefit, blocks_to_remove_with_maximum_benefit])
 
+    counter = 1
     if len(benefit_list) != 0:
         print(f'The maximum benefit is {maximum_benefit}.\n')
         for item in benefit_list:
             if item[0] == maximum_benefit:
                 print(f'Blocks to remove: {' '.join([REV_COL[i[1]]+str(i[0]+1) for i in item[1]])}')
+                save_solution_as_image(counter, points, screenshot_path, item[1])
+                counter += 1
+
+
+def save_solution_as_image(solution_number, points, screenshot_path, blocks_to_remove):
+    img_rgb = cv2.imread(screenshot_path)
+
+    for point in points:
+        pixel_i, pixel_j, matrix_i, matrix_j, is_block = point
+        if [matrix_i, matrix_j] in blocks_to_remove:
+            cv2.circle(img_rgb, (pixel_j, pixel_i), 10, (255, 0, 0), -1)
+    cv2.imwrite(f'solution-{solution_number}.png', img_rgb)
 
 
 def main():
-    # board = Board()
-    string_board = """
-                    a1    c1 d1    f1 g1
-                    a2    c2    e2
-                    a3 b3 c3 d3 e3 f3 g3
-                    a4 b4 c4 d4    f4
-                       b5 c5    e5 f5 g5
-                    a6 b6 c6 d6 e6    g6
-                       b7 c7 d7    f7
-                    """
+    screenshot_path = '1.png'
+    points = get_blocks_from_image(screenshot_path)
+    play_game(points)
+    # solve(points, screenshot_path)
 
-    string_board2 = ("a2 a4 a5 a6 b1 b3 b5 b6 b7 c1 c2 c3 c4 c5 c6 c7"
-                     " d1 d2 d4 d6 e3 e4 e5 e6 e7 f1 f2 f4 f5 f6 g1 g3 g5 g6 g7")
-    # board.update_board(string_board)
-    # play_game(board)
-    test(string_board2)
+
+def convert_pic(screenshot_path):
+    im = Image.open(screenshot_path).convert('RGB')
+    if screenshot_path.endswith('.jpg'):
+        new_path = screenshot_path.replace('.jpg', '.png')
+        im.save(new_path, "png")
+        return new_path
+    if screenshot_path.endswith('.webp'):
+        new_path = screenshot_path.replace('.webp', '.png')
+        im.save(new_path, "png")
+        return new_path
+    return screenshot_path
+
+
+def get_blocks_from_image(screenshot_path):
+    mimic_path = 'mimic_treasure.png'
+    screenshot_path = convert_pic(screenshot_path)
+    img_rgb = cv2.imread(screenshot_path)
+    screenshot_h, screenshot_w = img_rgb.shape[:-1]
+
+    # Finds the mimic treasure in the picture
+    template = cv2.imread(mimic_path)
+    template_w, template_h = template.shape[:-1]
+    res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
+    threshold = .5
+    loc = np.where(res >= threshold)
+    pts = list(zip(*loc[::-1]))
+    if len(pts) > 0:
+        pt = pts[0]
+        mimic_center = int(pt[1] + template_h/2 + 12), int(screenshot_w/2)
+    else:
+        print("Error: Can't find Mimic Treasure.")
+        mimic_center = int(screenshot_h * 0.61924), int(screenshot_w/2)
+    mimic_center_i, mimic_center_j = mimic_center
+    # Places points in the center of the blocks relative to the mimic treasure
+    vertical_offset = screenshot_w * 0.0545
+    horizontal_offset = screenshot_w * 0.113
+    offsets = []
+    for i in range(-7, 7):
+        if i % 2 != 0:
+            for j in [-3, -1, 1, 3]:
+                offsets.append((i, j))
+        else:
+            for j in [-2, 0, 2]:
+                offsets.append((i, j))
+    # remove mimic treasure point because it's dark like non-block
+    offsets.remove((0, 0))
+    # finds non-blocks by color
+    points = []
+    for offset in offsets:
+        i, j = offset
+        square = 10  # the size from the center of the sample
+        point_i, point_j = (int(mimic_center_i + i*vertical_offset), int(mimic_center_j + j*horizontal_offset))
+        cropped_image = img_rgb[point_i-square:point_i+square, point_j-square:point_j+square]  # take block sample
+        # calculates dominant color of sample
+        pixels = np.float32(cropped_image.reshape(-1, 3))
+        n_colors = 5
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, .1)
+        flags = cv2.KMEANS_RANDOM_CENTERS
+        _, labels, palette = cv2.kmeans(pixels, n_colors, None, criteria, 10, flags)
+        _, counts = np.unique(labels, return_counts=True)
+        dominant = palette[np.argmax(counts)]
+        point_matrix_i, point_matrix_j = (int((i+7)/2), j+3)
+        # point by pixels, point by matrix index, is there a block at the point
+        points.append((point_i, point_j, point_matrix_i, point_matrix_j, bool(dominant[2] > 140)))
+    points.append((mimic_center_i, mimic_center_j, 3, 3, True))  # adds mimic treasure block
+    return points
 
 
 if __name__ == '__main__':
     main()
+# priorities: down/down-right -> down-left -> up/down-right -> up/up-left -> up-right
