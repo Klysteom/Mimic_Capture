@@ -1,12 +1,33 @@
 import itertools
 import time
 import os
+import sys
 import cv2
 from PIL import Image
 import numpy as np
 
+screenshot_path = None
 COLS = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6}
 REV_COL = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G'}
+RATIOS = {'2.1635514': 0.6015, '1.77664975': 0.602, '2.21731449': 0.61924}
+IPHONE_12_PRO_MAX = RATIOS['2.1635514']
+RATIO_1 = RATIOS['1.77664975']
+RATIO_2 = RATIOS['2.21731449']
+
+PHONE_HEIGHT_OFFSET = IPHONE_12_PRO_MAX
+
+
+def main():
+    global screenshot_path
+    if len(sys.argv) > 1:
+        screenshot_path = os.getcwd() + f'/{sys.argv[1]}'
+    else:
+        screenshot_path = ''
+    points = get_blocks_from_image()
+
+    # play_game(points)
+    solve(points)
+    os.system("say beep")
 
 
 def convert_indexes(block):
@@ -161,7 +182,7 @@ def get_borders(board):
     return borders
 
 
-def solve(points, screenshot_path):
+def solve(points):
     maximum_benefit = 0
     benefit_list = []
     blocks_to_remove = []
@@ -177,6 +198,7 @@ def solve(points, screenshot_path):
             if board.matrix[i][j] is True and [i, j] != board.frog and [i, j] not in borders:
                 available_blocks.append([i, j])
 
+    blocks_to_remove.append([])  # add the option of remove only borders
     # combination of one block from available blocks
     for i in range(1, 11):  # add all combinations of true blocks that not in the borders and not the frog block
         blocks_to_remove += list(itertools.combinations(available_blocks, i))
@@ -208,43 +230,36 @@ def solve(points, screenshot_path):
         for item in benefit_list:
             if item[0] == maximum_benefit:
                 print(f'Blocks to remove: {' '.join([REV_COL[i[1]]+str(i[0]+1) for i in item[1]])}')
-                save_solution_as_image(counter, points, screenshot_path, item[1])
+                save_solution_as_image(counter, points, item[1])
                 counter += 1
 
 
-def save_solution_as_image(solution_number, points, screenshot_path, blocks_to_remove):
+def save_solution_as_image(solution_number, points, blocks_to_remove):
+    solutions_dir_path = f'{os.path.dirname(screenshot_path)}/{screenshot_path.split("/")[-1]} Solutions'
+    os.makedirs(solutions_dir_path, exist_ok=True)
     img_rgb = cv2.imread(screenshot_path)
-
+    screenshot_w = img_rgb.shape[1]
     for point in points:
         pixel_i, pixel_j, matrix_i, matrix_j, is_block = point
         if [matrix_i, matrix_j] in blocks_to_remove:
-            cv2.circle(img_rgb, (pixel_j, pixel_i), 10, (255, 0, 0), -1)
-    cv2.imwrite(f'solution-{solution_number}.png', img_rgb)
+            cv2.circle(img_rgb, (pixel_j, pixel_i), int(screenshot_w*10/566), (255, 0, 0), -1)
+    cv2.imwrite(f'{solutions_dir_path}/solution-{solution_number}.png', img_rgb)
 
 
-def main():
-    screenshot_path = '1.png'
-    points = get_blocks_from_image(screenshot_path)
-    play_game(points)
-    # solve(points, screenshot_path)
-
-
-def convert_pic(screenshot_path):
+def convert_pic():
+    global screenshot_path
     im = Image.open(screenshot_path).convert('RGB')
-    if screenshot_path.endswith('.jpg'):
-        new_path = screenshot_path.replace('.jpg', '.png')
-        im.save(new_path, "png")
-        return new_path
-    if screenshot_path.endswith('.webp'):
-        new_path = screenshot_path.replace('.webp', '.png')
-        im.save(new_path, "png")
-        return new_path
-    return screenshot_path
+    for extension in ['webp', 'jpg', 'jpeg']:
+        if screenshot_path.endswith(f'.{extension}'):
+            new_path = screenshot_path.replace(f'.{extension}', '.png')
+            im.save(new_path, "png")
+            os.remove(screenshot_path)
+            screenshot_path = new_path
 
 
-def get_blocks_from_image(screenshot_path):
-    mimic_path = 'mimic_treasure.png'
-    screenshot_path = convert_pic(screenshot_path)
+def get_blocks_from_image():
+    mimic_path = f"{'/'.join(__file__.split('/')[:-1])}/mimic_treasure.png"
+    convert_pic()
     img_rgb = cv2.imread(screenshot_path)
     screenshot_h, screenshot_w = img_rgb.shape[:-1]
 
@@ -257,13 +272,13 @@ def get_blocks_from_image(screenshot_path):
     pts = list(zip(*loc[::-1]))
     if len(pts) > 0:
         pt = pts[0]
-        mimic_center = int(pt[1] + template_h/2 + 12), int(screenshot_w/2)
+        mimic_center = int(pt[1] + template_h/2 + screenshot_h*(12/1225)), int(screenshot_w/2)
     else:
         print("Error: Can't find Mimic Treasure.")
-        mimic_center = int(screenshot_h * 0.61924), int(screenshot_w/2)
+        mimic_center = int(screenshot_h * PHONE_HEIGHT_OFFSET), int(screenshot_w/2)
     mimic_center_i, mimic_center_j = mimic_center
     # Places points in the center of the blocks relative to the mimic treasure
-    vertical_offset = screenshot_w * 0.0545
+    vertical_offset = screenshot_w * 0.0536
     horizontal_offset = screenshot_w * 0.113
     offsets = []
     for i in range(-7, 7):
