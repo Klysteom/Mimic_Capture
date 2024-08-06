@@ -1,33 +1,53 @@
-import itertools
-import time
-import os
-import sys
-import cv2
 from PIL import Image
 import numpy as np
+import itertools
+import operator
+import time
+import sys
+import cv2
+import os
 
-screenshot_path = None
+
 COLS = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5, 'G': 6}
 REV_COL = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G'}
-RATIOS = {'2.1635514': 0.6015, '1.77664975': 0.602, '2.21731449': 0.61924}
-IPHONE_12_PRO_MAX = RATIOS['2.1635514']
-RATIO_1 = RATIOS['1.77664975']
-RATIO_2 = RATIOS['2.21731449']
-
-PHONE_HEIGHT_OFFSET = IPHONE_12_PRO_MAX
+horizontal_fix, vertical_fix, width_fix, height_fix = 0, 0, 0, 0
+DEBUG, PLAY, SOLVE = 0, 1, 2
+screenshot_path = None
 
 
 def main():
-    global screenshot_path
+    global screenshot_path, width_fix, height_fix, vertical_fix, horizontal_fix
+    mode = SOLVE
+
     if len(sys.argv) > 1:
         screenshot_path = os.getcwd() + f'/{sys.argv[1]}'
     else:
-        screenshot_path = ''
+        screenshot_path = ''  # here you put the screenshot path
+
+    if mode == DEBUG:
+        horizontal_fix = 0
+        vertical_fix = 0
+        height_fix = 0
+        width_fix = 0
+
     points = get_blocks_from_image()
 
-    # play_game(points)
-    solve(points)
-    os.system("say beep")
+    if mode == DEBUG:
+        debug_program(points, print_points=False)
+
+    if mode == PLAY:
+        play_game(points)
+
+    if mode == SOLVE:
+        solve(points)
+        os.system("say beep")
+
+
+def debug_program(points, print_points=False):
+    if print_points:
+        for point in points:
+            print(point)
+    save_solution_as_image('debug', points, [], debug=True)
 
 
 def convert_indexes(block):
@@ -82,13 +102,33 @@ class Board:
                 self.matrix[border[0]][border[1]] = False
 
     def remove_unreachable_blocks(self):
+        reachable_blocks = self.get_reachable_blocks()
         for i, row in enumerate(self.matrix):
             for j, value in enumerate(row):
-                if value is True and [i, j] != self.frog:
-                    if self.calculate_best_move(i, j, to_frog=True)[0] is None:
-                        self.matrix[i][j] = False
+                if value is True and [i, j] not in reachable_blocks:
+                    self.matrix[i][j] = False
+
+    def get_reachable_blocks(self):
+        visited = []
+        queue = [[self.frog[0], self.frog[1]]]
+        offset_indexes = [[i, j] for i in range(-1, 2) for j in range(-1, 2)]
+        offset_indexes.remove([0, 0])
+        borders = get_borders(self)
+        while queue:
+            i, j = queue[0]
+            visited.append(queue.pop(0))
+            for offset_i, offset_j in offset_indexes:
+                dest_i = i + offset_i
+                dest_j = j + offset_j
+                if [i, j] in borders and [dest_i, dest_j] in borders:  # cant go from border block to border block
+                    continue
+                if ([dest_i, dest_j] not in visited and [dest_i, dest_j] not in queue
+                        and check_move(self, i, j, dest_i, dest_j)):
+                    queue.append([dest_i, dest_j])
+        return visited
 
     def move(self):
+        self.remove_unreachable_blocks()
         border_i, border_j = self.calculate_best_move(self.frog[0], self.frog[1])
         if border_i is None or border_j is None:
             # The player won the game
@@ -102,13 +142,28 @@ class Board:
 
     def calculate_best_move(self, start_i, start_j, to_frog=False):
         borders = get_borders(self)
+        if not borders:
+            return None, None
+        priority_border_list = sorted(sorted(borders, key=operator.itemgetter(1)), key=operator.itemgetter(0),
+                                      reverse=True)
+        [i.append(999) for i in priority_border_list]
         # calculate the shortest path from start to destination
+        i, j = self.frog
+        ranks = {(i - 1, j): 8, (i - 1, j + 1): 7, (i, j + 1): 6, (i + 1, j + 1): 5,
+                 (i + 1, j): 4, (i + 1, j - 1): 3, (i, j - 1): 2, (i - 1, j - 1): 1}
         visited = []
         queue = [[start_i, start_j]]
+        distance_list = [[[start_i, start_j], 0]]
+        to_frog_distance_list = []
         while queue:
             i, j = queue[0]
+            for element in distance_list:
+                if [i, j] == element[0]:
+                    distance = element[1] + 1
             visited.append(queue.pop(0))
-            for offset_i, offset_j in [[1, 0], [1, -1], [0, -1], [1, 1], [-1, 0], [-1, -1], [0, 1], [-1, 1]]:
+            offset_indexes = [[i, j] for i in range(-1, 2) for j in range(-1, 2)]
+            offset_indexes.remove([0, 0])
+            for offset_i, offset_j in offset_indexes:
                 dest_i = i + offset_i
                 dest_j = j + offset_j
                 if ([dest_i, dest_j] not in visited
@@ -116,12 +171,36 @@ class Board:
                         and check_move(self, i, j, dest_i, dest_j)):
                     if to_frog:
                         if [dest_i, dest_j] == self.frog:
-                            return i, j
+                            rank = ranks[(i, j)]
+                            to_frog_distance_list.append([i, j, distance, rank])
+                        else:
+                            queue.append([dest_i, dest_j])
+                            distance_list.append([[dest_i, dest_j], distance])
+                        if [i, j] == self.frog:
+                            break
                     else:
-                        if [dest_i, dest_j] in borders:
-                            return dest_i, dest_j
-                    if [dest_i, dest_j] not in borders:
                         queue.append([dest_i, dest_j])
+                        distance_list.append([[dest_i, dest_j], distance])
+        if to_frog:
+            if len(to_frog_distance_list) == 0:
+                return None, None
+            arr = np.array(to_frog_distance_list)
+            min_distance_to_frog = np.min(arr[:, 2])
+            minimal_list = [d for d in to_frog_distance_list if d[2] == min_distance_to_frog]
+            minimal_list = sorted(minimal_list, key=lambda x: x[3], reverse=True)
+            i, j, _, _ = minimal_list[0]
+            return i, j
+        else:
+            for element in priority_border_list:
+                for d in distance_list:
+                    if element[:-1] == d[0]:
+                        element[-1] = d[1]
+                        break
+            arr = np.array(priority_border_list)
+            min_distance_to_border = np.min(arr[:, 2])
+            for border in priority_border_list:
+                if border[2] == min_distance_to_border:
+                    return border[0], border[1]
         return None, None
 
     def show_board(self):
@@ -192,7 +271,6 @@ def solve(points):
     board.remove_pointless_blocks()
     board.remove_unreachable_blocks()
     borders = get_borders(board)
-
     for i in range(7):
         for j in range(7):
             if board.matrix[i][j] is True and [i, j] != board.frog and [i, j] not in borders:
@@ -208,10 +286,26 @@ def solve(points):
         for block in block_to_remove:
             i, j = block
             board.matrix[i][j] = False
+
+        # Checks if one of the blocks to be removed cannot be reached when the other blocks are removed.
+        # This causes a double solution.
+        continue_flag = False
+        for block in block_to_remove:
+            i, j = block
+            board.matrix[i][j] = True
+            board.remove_unreachable_blocks()
+            if board.matrix[i][j] is False:
+                continue_flag = True
+                break
+            board.matrix[i][j] = False
+        if continue_flag is True:
+            continue
+
         board.remove_pointless_blocks()
         board.remove_unreachable_blocks()
         borders = get_borders(board)
         amount_of_blocks = len(borders) + len(block_to_remove)
+
         if amount_of_blocks <= 10:
             true_blocks = len(block_to_remove)
             for i in range(7):
@@ -219,6 +313,7 @@ def solve(points):
                     if board.matrix[i][j] is True:
                         true_blocks += 1
             benefit = true_blocks - amount_of_blocks
+
             if benefit >= maximum_benefit:
                 maximum_benefit = benefit
                 blocks_to_remove_with_maximum_benefit = list(block_to_remove) + borders
@@ -234,7 +329,7 @@ def solve(points):
                 counter += 1
 
 
-def save_solution_as_image(solution_number, points, blocks_to_remove):
+def save_solution_as_image(solution_number, points, blocks_to_remove, debug=False):
     solutions_dir_path = f'{os.path.dirname(screenshot_path)}/{screenshot_path.split("/")[-1]} Solutions'
     os.makedirs(solutions_dir_path, exist_ok=True)
     img_rgb = cv2.imread(screenshot_path)
@@ -243,6 +338,8 @@ def save_solution_as_image(solution_number, points, blocks_to_remove):
         pixel_i, pixel_j, matrix_i, matrix_j, is_block = point
         if [matrix_i, matrix_j] in blocks_to_remove:
             cv2.circle(img_rgb, (pixel_j, pixel_i), int(screenshot_w*10/566), (255, 0, 0), -1)
+        if debug:
+            cv2.circle(img_rgb, (pixel_j, pixel_i), int(screenshot_w * 10 / 566), (255, 0, 0), -1)
     cv2.imwrite(f'{solutions_dir_path}/solution-{solution_number}.png', img_rgb)
 
 
@@ -272,14 +369,14 @@ def get_blocks_from_image():
     pts = list(zip(*loc[::-1]))
     if len(pts) > 0:
         pt = pts[0]
-        mimic_center = int(pt[1] + template_h/2 + screenshot_h*(12/1225)), int(screenshot_w/2)
+        mimic_center = int(pt[1] + template_h/2 + screenshot_h*(12/1225))+height_fix, int(screenshot_w/2)+width_fix
     else:
         print("Error: Can't find Mimic Treasure.")
-        mimic_center = int(screenshot_h * PHONE_HEIGHT_OFFSET), int(screenshot_w/2)
+        mimic_center = int(screenshot_h * 0.6015) + height_fix, int(screenshot_w/2) + width_fix
     mimic_center_i, mimic_center_j = mimic_center
     # Places points in the center of the blocks relative to the mimic treasure
-    vertical_offset = screenshot_w * 0.0536
-    horizontal_offset = screenshot_w * 0.113
+    vertical_offset = screenshot_w * 0.0536 + vertical_fix
+    horizontal_offset = screenshot_w * 0.113 + horizontal_fix
     offsets = []
     for i in range(-7, 7):
         if i % 2 != 0:
@@ -314,4 +411,3 @@ def get_blocks_from_image():
 
 if __name__ == '__main__':
     main()
-# priorities: down/down-right -> down-left -> up/down-right -> up/up-left -> up-right
